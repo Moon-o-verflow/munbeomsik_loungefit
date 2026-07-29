@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/db";
 import { AppError } from "@/lib/errors";
 import { getPolicy } from "@/lib/policy";
+import { assertScopeBranch, type AdminScope } from "@/lib/scope";
 import { cancelDeadlineAt, isRollingOpen, kstDayBounds, kstWeekBounds } from "@/lib/time";
 import { getActiveWaitlistOfferCount, lockSchedule, lockTicket, selectAndLockTicket } from "@/services/booking";
 import { getTicketRemainingCount, getTicketUsageCount } from "@/services/ledger";
@@ -18,7 +19,21 @@ async function lockReservation(tx: import("@/generated/prisma/client").Prisma.Tr
   return reservations[0] ?? null;
 }
 
+type ReservationCreateOptions = {
+  source: "MEMBER" | "PROXY";
+  createdByManagerId?: string;
+  scope?: AdminScope;
+};
+
 export async function createMemberReservation(memberId: string, scheduleId: string) {
+  return createReservationForMember(memberId, scheduleId, { source: "MEMBER" });
+}
+
+export async function createReservationForMember(
+  memberId: string,
+  scheduleId: string,
+  options: ReservationCreateOptions,
+) {
   const member = await prisma.member.findUnique({
     where: { id: memberId },
     select: { isSuspended: true },
@@ -38,6 +53,9 @@ export async function createMemberReservation(memberId: string, scheduleId: stri
     const schedule = await lockSchedule(tx, scheduleId);
     if (!schedule) {
       throw new AppError("ERR_CLASS_CLOSED");
+    }
+    if (options.scope) {
+      assertScopeBranch(options.scope, schedule.branchId);
     }
 
     if (!isRollingOpen(schedule.startsAt, policy.rollingOpenDays, now)) {
@@ -82,7 +100,14 @@ export async function createMemberReservation(memberId: string, scheduleId: stri
       data: { ticketId: ticket.id, memberId, classScheduleId: schedule.id, status: "CONFIRMED" },
     });
     const reservation = await tx.reservation.create({
-      data: { classScheduleId: schedule.id, memberId, ticketUsageId: usage.id, status: "RESERVED" },
+      data: {
+        classScheduleId: schedule.id,
+        memberId,
+        ticketUsageId: usage.id,
+        status: "RESERVED",
+        source: options.source,
+        createdByManagerId: options.createdByManagerId,
+      },
     });
     await tx.classSchedule.update({
       where: { id: schedule.id },
@@ -99,6 +124,10 @@ export async function createMemberReservation(memberId: string, scheduleId: stri
 }
 
 export async function cancelMemberReservation(memberId: string, reservationId: string) {
+  return cancelReservationForMember(memberId, reservationId);
+}
+
+export async function cancelReservationForMember(memberId: string, reservationId: string, scope?: AdminScope) {
   const existing = await prisma.reservation.findFirst({
     where: { id: reservationId, memberId },
     select: { classScheduleId: true, ticketUsage: { select: { id: true, ticketId: true } } },
@@ -113,6 +142,9 @@ export async function cancelMemberReservation(memberId: string, reservationId: s
     const schedule = await lockSchedule(tx, existing.classScheduleId);
     if (!schedule) {
       throw new AppError("ERR_RESERVATION_NOT_FOUND");
+    }
+    if (scope) {
+      assertScopeBranch(scope, schedule.branchId);
     }
     const ticket = await lockTicket(tx, existing.ticketUsage.ticketId);
     if (!ticket) {

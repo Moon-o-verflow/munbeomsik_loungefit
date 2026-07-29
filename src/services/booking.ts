@@ -5,8 +5,10 @@ import { getTicketRemainingCount } from "@/services/ledger";
 
 export type LockedSchedule = {
   id: string;
+  branchId: string;
   ticketTypeId: string;
   startsAt: Date;
+  endsAt: Date;
   capacity: number;
   reservedCount: number;
   status: "SCHEDULED" | "CLOSED" | "CANCELED";
@@ -23,8 +25,10 @@ export async function lockSchedule(tx: Prisma.TransactionClient, scheduleId: str
   const schedules = await tx.$queryRaw<LockedSchedule[]>`
     SELECT
       id,
+      branch_id AS "branchId",
       ticket_type_id AS "ticketTypeId",
       starts_at AS "startsAt",
+      ends_at AS "endsAt",
       capacity,
       reserved_count AS "reservedCount",
       status

@@ -42,6 +42,17 @@ export const ERROR_DEFINITIONS = {
   ERR_WAITLIST_DUPLICATE: { status: 409, message: "이미 대기 중인 수업입니다." },
   ERR_WAITLIST_NOT_APPLICABLE: { status: 409, message: "아직 자리가 남아 있어 대기 등록이 필요하지 않습니다." },
   ERR_OFFER_EXPIRED: { status: 410, message: "확정 시간이 지나 순번이 다음 대기자에게 넘어갔습니다." },
+  ERR_FORBIDDEN: { status: 403, message: "해당 작업을 수행할 권한이 없습니다." },
+  ERR_INVALID_REQUEST: { status: 400, message: "입력값이 올바르지 않습니다." },
+  ERR_SCHEDULE_HAS_RESERVATION: {
+    status: 409,
+    message: "확정 예약이 있는 수업은 삭제할 수 없습니다. 폐강 또는 수업 취소 기능을 이용해 주세요.",
+  },
+  ERR_CLASS_NOT_STARTED: { status: 409, message: "수업 시작 전에는 출석 또는 노쇼 처리할 수 없습니다." },
+  ERR_ATTENDANCE_REVERT_EXPIRED: {
+    status: 409,
+    message: "출석 처리는 수업 종료 후 24시간 이내에만 되돌릴 수 있습니다.",
+  },
 } as const;
 
 export type ErrorCode = keyof typeof ERROR_DEFINITIONS;

@@ -23,6 +23,37 @@ export function kstIsoString(value: ConfigType) {
   return toKst(value).format("YYYY-MM-DDTHH:mm:ssZ");
 }
 
+export function formatKstTime(value: ConfigType) {
+  return toKst(value).format("HH:mm");
+}
+
+export function formatKstAdminDate(value: ConfigType) {
+  return toKst(value).format("M/D(ddd)");
+}
+
+export function formatKstAdminDateTime(value: ConfigType) {
+  return toKst(value).format("M/D(ddd) HH:mm");
+}
+
+export function formatKstInputDate(value: ConfigType) {
+  return toKst(value).format("YYYY-MM-DD");
+}
+
+export function formatKstMonth(value: ConfigType) {
+  return toKst(value).format("YYYY년 M월");
+}
+
+export function formatKstDate(value: ConfigType) {
+  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return dayjs.tz(value, "YYYY-MM-DD", KST_TIME_ZONE).format("YYYY.MM.DD");
+  }
+  return toKst(value).format("YYYY.MM.DD");
+}
+
+export function formatKstDay(value: string) {
+  return dayjs.tz(value, "YYYY-MM-DD", KST_TIME_ZONE).format("D");
+}
+
 export function kstDayBounds(value: ConfigType) {
   const start = toKst(value).startOf("day");
   return {
@@ -41,9 +72,25 @@ export function kstWeekBounds(value: ConfigType) {
   };
 }
 
+export function kstMonthBounds(value: ConfigType) {
+  const start = toKst(value).startOf("month");
+  return {
+    start: start.toDate(),
+    end: start.add(1, "month").toDate(),
+  };
+}
+
 export function kstDateRange(date: string) {
   const start = dayjs.tz(date, "YYYY-MM-DD", KST_TIME_ZONE).startOf("day");
   return { start: start.toDate(), end: start.add(1, "day").toDate() };
+}
+
+export function kstDateTime(date: string, time: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(time)) {
+    return null;
+  }
+  const value = dayjs.tz(`${date} ${time}`, "YYYY-MM-DD HH:mm", KST_TIME_ZONE);
+  return value.isValid() ? value.toDate() : null;
 }
 
 export function isRollingOpen(

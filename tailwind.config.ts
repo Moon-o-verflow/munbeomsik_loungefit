@@ -17,6 +17,10 @@ const config: Config = {
         disabled: "#B8B2A9",
         "disabled-soft": "#EFEBE5",
         quiet: "#F7F5F1",
+        sidebar: "#1F241E",
+        "sidebar-text": "#C9CFC6",
+        "sidebar-active": "#2E362C",
+        "sidebar-muted": "#8C948A",
       },
       borderRadius: { card: "12px", control: "10px" },
       fontFamily: {
