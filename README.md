@@ -4,7 +4,7 @@
 
 ## 라이브 URL
 
-Vercel Production 배포가 완료되면 이 항목을 실제 Production 도메인으로 갱신합니다. Preview 주소는 운영 확인 용도가 아닙니다.
+[https://munbeomsik-loungefit.vercel.app/login](https://munbeomsik-loungefit.vercel.app/login)
 
 ## 실행 방법
 
