@@ -13,25 +13,26 @@ const memberSeeds: Array<{
   ticketCode: TicketCode;
   total: number;
   remaining: number;
+  preloadedConsumed?: number;
   expiresInDays: number;
   suspended?: boolean;
 }> = [
   { phone: "01011110001", name: "김민서", branchCode: "GANGNAM", ticketCode: "PILATES_1ON4", total: 20, remaining: 6, expiresInDays: 64 },
-  { phone: "01011110002", name: "정하윤", branchCode: "GANGNAM", ticketCode: "PILATES_1ON4", total: 20, remaining: 4, expiresInDays: 78 },
-  { phone: "01011110003", name: "박서연", branchCode: "GANGNAM", ticketCode: "YOGA", total: 30, remaining: 2, expiresInDays: 17 },
-  { phone: "01011110004", name: "강서현", branchCode: "GANGNAM", ticketCode: "PILATES_1ON4", total: 20, remaining: 3, expiresInDays: 43, suspended: true },
+  { phone: "01011110002", name: "정하윤", branchCode: "GANGNAM", ticketCode: "PILATES_1ON4", total: 20, remaining: 4, preloadedConsumed: 14, expiresInDays: 78 },
+  { phone: "01011110003", name: "박서연", branchCode: "GANGNAM", ticketCode: "YOGA", total: 30, remaining: 2, preloadedConsumed: 23, expiresInDays: 17 },
+  { phone: "01011110004", name: "강서현", branchCode: "GANGNAM", ticketCode: "PILATES_1ON4", total: 20, remaining: 3, preloadedConsumed: 15, expiresInDays: 43, suspended: true },
   { phone: "01011110005", name: "송예린", branchCode: "GANGNAM", ticketCode: "YOGA", total: 10, remaining: 0, expiresInDays: 7 },
   { phone: "01011110006", name: "노현우", branchCode: "GANGNAM", ticketCode: "YOGA", total: 30, remaining: 8, expiresInDays: 2 },
   { phone: "01011110007", name: "최유진", branchCode: "GANGNAM", ticketCode: "PT_1ON1", total: 10, remaining: 9, expiresInDays: 125 },
-  { phone: "01011110008", name: "한지우", branchCode: "GANGNAM", ticketCode: "PILATES_1ON4", total: 20, remaining: 11, expiresInDays: 114 },
+  { phone: "01011110008", name: "한지우", branchCode: "GANGNAM", ticketCode: "PILATES_1ON4", total: 20, remaining: 11, preloadedConsumed: 8, expiresInDays: 114 },
   { phone: "01011110009", name: "권민재", branchCode: "GANGNAM", ticketCode: "PILATES_1ON4", total: 20, remaining: 12, expiresInDays: 90 },
   { phone: "01011110010", name: "문지아", branchCode: "GANGNAM", ticketCode: "PILATES_1ON4", total: 20, remaining: 10, expiresInDays: 90 },
   { phone: "01011110011", name: "서도윤", branchCode: "GANGNAM", ticketCode: "PILATES_1ON4", total: 20, remaining: 9, expiresInDays: 90 },
   { phone: "01011110012", name: "오하린", branchCode: "GANGNAM", ticketCode: "PILATES_1ON4", total: 20, remaining: 8, expiresInDays: 90 },
   { phone: "01011110013", name: "임지후", branchCode: "GANGNAM", ticketCode: "PILATES_1ON4", total: 20, remaining: 7, expiresInDays: 90 },
   { phone: "01011110014", name: "장유나", branchCode: "GANGNAM", ticketCode: "PILATES_1ON4", total: 20, remaining: 6, expiresInDays: 90 },
-  { phone: "01011110015", name: "이서준", branchCode: "SEONGSU", ticketCode: "PILATES_1ON4", total: 20, remaining: 3, expiresInDays: 90 },
-  { phone: "01011110016", name: "윤채원", branchCode: "PANGYO", ticketCode: "PILATES_1ON4", total: 20, remaining: 7, expiresInDays: 90 },
+  { phone: "01011110015", name: "이서준", branchCode: "SEONGSU", ticketCode: "PILATES_1ON4", total: 20, remaining: 3, preloadedConsumed: 6, expiresInDays: 90 },
+  { phone: "01011110016", name: "윤채원", branchCode: "PANGYO", ticketCode: "PILATES_1ON4", total: 20, remaining: 7, preloadedConsumed: 2, expiresInDays: 90 },
   { phone: "01011110017", name: "고은채", branchCode: "SEONGSU", ticketCode: "YOGA", total: 20, remaining: 11, expiresInDays: 90 },
   { phone: "01011110018", name: "김도현", branchCode: "SEONGSU", ticketCode: "PILATES_1ON4", total: 20, remaining: 10, expiresInDays: 90 },
   { phone: "01011110019", name: "류서아", branchCode: "SEONGSU", ticketCode: "PILATES_1ON4", total: 20, remaining: 9, expiresInDays: 90 },
@@ -174,7 +175,7 @@ async function main() {
           isActive: true,
         },
       });
-      const consumed = seed.total - seed.remaining;
+      const consumed = seed.preloadedConsumed ?? seed.total - seed.remaining;
       if (consumed > 0) {
         await tx.ticketUsage.createMany({
           data: Array.from({ length: consumed }, () => ({
@@ -192,28 +193,68 @@ async function main() {
       if (!value) throw new Error(`Missing seed member ${phone}`);
       return value;
     };
-    const fullScheduleDate = now.hour() < 19 ? today : today.add(1, "day");
-    const fullSchedule = await tx.classSchedule.findFirst({
-      where: {
+    type SeedReservationStatus = "RESERVED" | "CANCELED" | "LATE_CANCELED" | "ATTENDED" | "NO_SHOW" | "CLASS_CANCELED";
+
+    const nextAt = (hour: number) => {
+      const candidate = today.hour(hour).minute(0).second(0).millisecond(0);
+      return candidate.isAfter(now) ? candidate : candidate.add(1, "day");
+    };
+    const findGangnamPilates = async (startsAt: Date) => {
+      const schedule = await tx.classSchedule.findFirst({
+        where: { branchId: branches.GANGNAM.id, ticketTypeId: ticketTypes.PILATES_1ON4.id, startsAt },
+      });
+      if (!schedule) throw new Error("Missing generated Gangnam Pilates schedule for seed data.");
+      return schedule;
+    };
+    const createScenarioSchedule = async (ticketCode: TicketCode, startsAt: Date, capacity = 8) => tx.classSchedule.create({
+      data: {
         branchId: branches.GANGNAM.id,
-        ticketTypeId: ticketTypes.PILATES_1ON4.id,
-        startsAt: fullScheduleDate.hour(19).minute(0).second(0).millisecond(0).toDate(),
+        ticketTypeId: ticketTypes[ticketCode].id,
+        instructorName: "시연 강사",
+        startsAt,
+        endsAt: new Date(startsAt.getTime() + 50 * 60 * 1_000),
+        capacity,
       },
     });
-    if (!fullSchedule) throw new Error("Missing Gangnam Pilates schedule for waitlist seed data.");
-
-    const fullMembers = ["01011110009", "01011110010", "01011110011", "01011110012", "01011110013", "01011110014", "01011110015", "01011110016"];
-    for (const phone of fullMembers) {
-      const member = memberTicket(phone);
+    const createReservation = async (
+      member: { memberId: string; ticketId: string },
+      schedule: { id: string },
+      status: SeedReservationStatus,
+    ) => {
+      const usageStatus = status === "RESERVED"
+        ? "CONFIRMED"
+        : status === "CANCELED" || status === "CLASS_CANCELED"
+          ? "RELEASED"
+          : "CONSUMED";
       const usage = await tx.ticketUsage.create({
-        data: { ticketId: member.ticketId, memberId: member.memberId, classScheduleId: fullSchedule.id, status: "CONFIRMED" },
+        data: {
+          ticketId: member.ticketId,
+          memberId: member.memberId,
+          classScheduleId: schedule.id,
+          status: usageStatus,
+          ...(usageStatus === "RELEASED" ? { releasedAt: now.toDate() } : {}),
+        },
       });
       await tx.reservation.create({
-        data: { classScheduleId: fullSchedule.id, memberId: member.memberId, ticketUsageId: usage.id, status: "RESERVED" },
+        data: {
+          classScheduleId: schedule.id,
+          memberId: member.memberId,
+          ticketUsageId: usage.id,
+          status,
+          ...(status === "CANCELED" || status === "LATE_CANCELED" || status === "CLASS_CANCELED" ? { canceledAt: now.toDate() } : {}),
+        },
       });
-    }
-    await tx.classSchedule.update({ where: { id: fullSchedule.id }, data: { reservedCount: fullMembers.length } });
+      if (status === "RESERVED" || status === "ATTENDED" || status === "NO_SHOW") {
+        await tx.classSchedule.update({ where: { id: schedule.id }, data: { reservedCount: { increment: 1 } } });
+      }
+    };
 
+    // S-1/S-2: the closest future 19:00 Pilates class is full with two waiters.
+    const fullSchedule = await findGangnamPilates(nextAt(19).toDate());
+    const fullMembers = ["01011110009", "01011110010", "01011110011", "01011110012", "01011110013", "01011110014", "01011110015", "01011110016"];
+    for (const phone of fullMembers) {
+      await createReservation(memberTicket(phone), fullSchedule, "RESERVED");
+    }
     for (const [index, phone] of ["01011110018", "01011110019"].entries()) {
       const member = memberTicket(phone);
       const usage = await tx.ticketUsage.create({
@@ -224,15 +265,8 @@ async function main() {
       });
     }
 
-    const offeredScheduleDate = fullScheduleDate.add(1, "day");
-    const offeredSchedule = await tx.classSchedule.findFirst({
-      where: {
-        branchId: branches.GANGNAM.id,
-        ticketTypeId: ticketTypes.PILATES_1ON4.id,
-        startsAt: offeredScheduleDate.hour(10).minute(0).second(0).millisecond(0).toDate(),
-      },
-    });
-    if (!offeredSchedule) throw new Error("Missing Gangnam Pilates offer schedule for seed data.");
+    // S-3: an active offer is kept independent from the full-class waitlist.
+    const offeredSchedule = await findGangnamPilates(nextAt(10).toDate());
     const offeredMember = memberTicket("01011110008");
     const offeredUsage = await tx.ticketUsage.create({
       data: { ticketId: offeredMember.ticketId, memberId: offeredMember.memberId, classScheduleId: offeredSchedule.id, status: "HOLD" },
@@ -248,6 +282,68 @@ async function main() {
         expiresAt: new Date(Math.min(now.add(25, "minute").valueOf(), offeredSchedule.startsAt.getTime())),
       },
     });
+
+    // S-4/S-5: close-review and attendance-pending records for the administrator dashboard.
+    const closeCandidate = await createScenarioSchedule(
+      "PILATES_1ON4",
+      now.add(90, "minute").second(0).millisecond(0).toDate(),
+    );
+    await createReservation(memberTicket("01011110022"), closeCandidate, "RESERVED");
+    const attendancePending = await createScenarioSchedule(
+      "PILATES_1ON4",
+      now.subtract(2, "hour").second(0).millisecond(0).toDate(),
+    );
+    for (const phone of ["01011110009", "01011110010", "01011110011", "01011110012", "01011110013"]) {
+      await createReservation(memberTicket(phone), attendancePending, "RESERVED");
+    }
+
+    // S-6/S-7: current-month NO_SHOW alerts and all five past reservation badges.
+    const historyStart = now.subtract(4, "hour").second(0).millisecond(0);
+    for (let index = 0; index < 3; index += 1) {
+      const schedule = await createScenarioSchedule("YOGA", historyStart.subtract(index, "day").toDate(), 12);
+      await createReservation(memberTicket("01011110003"), schedule, "NO_SHOW");
+    }
+    for (const [index, status] of (["ATTENDED", "CANCELED", "LATE_CANCELED", "CLASS_CANCELED"] as const).entries()) {
+      const schedule = await createScenarioSchedule("YOGA", historyStart.subtract(index + 4, "day").toDate(), 12);
+      if (status === "CLASS_CANCELED") {
+        await tx.classSchedule.update({ where: { id: schedule.id }, data: { status: "CANCELED", canceledReason: "시연용 수업 취소" } });
+      }
+      await createReservation(memberTicket("01011110003"), schedule, status);
+    }
+
+    // S-8: two usages in the KST week make the weekly-limit case visible.
+    const daysSinceMonday = (today.day() + 6) % 7;
+    const weekStart = today.subtract(daysSinceMonday, "day");
+    for (let offset = 0; offset < 2; offset += 1) {
+      const startsAt = weekStart.add(offset, "day").hour(17).minute(0).second(0).millisecond(0);
+      const schedule = await createScenarioSchedule("PILATES_1ON4", startsAt.toDate());
+      await createReservation(memberTicket("01011110002"), schedule, startsAt.isAfter(now) ? "RESERVED" : "ATTENDED");
+    }
+
+    // S-9: suspension does not remove already-created future reservations.
+    for (const offset of [4, 5]) {
+      const schedule = await createScenarioSchedule("PILATES_1ON4", today.add(offset, "day").hour(17).minute(0).second(0).millisecond(0).toDate());
+      await createReservation(memberTicket("01011110004"), schedule, "RESERVED");
+    }
+
+    // S-10: twenty historical cross-branch bookings feed the statistics matrix.
+    for (let offset = 1; offset <= 10; offset += 1) {
+      const schedule = await createScenarioSchedule("PILATES_1ON4", today.subtract(offset, "day").hour(19).minute(0).second(0).millisecond(0).toDate());
+      await createReservation(memberTicket("01011110015"), schedule, "ATTENDED");
+      await createReservation(memberTicket("01011110016"), schedule, "ATTENDED");
+    }
+
+    // S-11: two future classes with different fill rates keep schedule/statistics screens populated.
+    const partialSchedules = [
+      await createScenarioSchedule("PILATES_1ON4", today.add(2, "day").hour(17).minute(0).second(0).millisecond(0).toDate()),
+      await createScenarioSchedule("PILATES_1ON4", today.add(3, "day").hour(17).minute(0).second(0).millisecond(0).toDate()),
+    ];
+    for (const phone of ["01011110009", "01011110010", "01011110011", "01011110012"]) {
+      await createReservation(memberTicket(phone), partialSchedules[0], "RESERVED");
+    }
+    for (const phone of ["01011110009", "01011110010", "01011110011", "01011110012", "01011110013", "01011110014"]) {
+      await createReservation(memberTicket(phone), partialSchedules[1], "RESERVED");
+    }
   }, { timeout: 60_000 });
 
   console.info(`Seeded 3 branches, 24 members, and KST schedules (${KST}).`);
