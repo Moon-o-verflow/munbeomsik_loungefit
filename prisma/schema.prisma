@@ -1,15 +1,213 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Get a free hosted Postgres database in seconds: `npx create-db`
-
 generator client {
   provider = "prisma-client"
   output   = "../src/generated/prisma"
-  url       = env("DATABASE_URL")
-  directUrl = env("DIRECT_URL")
 }
 
 datasource db {
   provider = "postgresql"
+}
+
+enum ManagerRole {
+  MANAGER
+  ADMIN
+}
+
+enum TicketUsageStatus {
+  HOLD
+  CONFIRMED
+  CONSUMED
+  RELEASED
+}
+
+enum ClassScheduleStatus {
+  SCHEDULED
+  CLOSED
+  CANCELED
+}
+
+enum ReservationStatus {
+  RESERVED
+  CANCELED
+  LATE_CANCELED
+  ATTENDED
+  NO_SHOW
+  CLASS_CANCELED
+}
+
+enum ReservationSource {
+  MEMBER
+  PROXY
+}
+
+model Branch {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  members   Member[]
+  managers  Manager[]
+  schedules ClassSchedule[]
+
+  @@map("branch")
+}
+
+model Member {
+  id              String    @id @default(uuid()) @db.Uuid
+  branchId        String    @map("branch_id") @db.Uuid
+  name            String
+  phone           String    @unique
+  phoneLast4      String    @map("phone_last4")
+  isSuspended     Boolean   @default(false) @map("is_suspended")
+  suspendedReason String?   @map("suspended_reason")
+  suspendedUntil  DateTime? @map("suspended_until") @db.Date
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  branch       Branch        @relation(fields: [branchId], references: [id])
+  tickets      Ticket[]
+  ticketUsages TicketUsage[]
+  reservations Reservation[]
+
+  @@map("member")
+}
+
+model Manager {
+  id           String      @id @default(uuid()) @db.Uuid
+  branchId     String?     @map("branch_id") @db.Uuid
+  loginId      String      @unique @map("login_id")
+  passwordHash String      @map("password_hash")
+  role         ManagerRole
+  name         String
+  createdAt    DateTime    @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  branch              Branch?       @relation(fields: [branchId], references: [id])
+  createdReservations Reservation[] @relation("ManagerCreatedReservations")
+
+  @@map("manager")
+}
+
+model TicketType {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String
+  code      String   @unique
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  tickets   Ticket[]
+  schedules ClassSchedule[]
+
+  @@map("ticket_type")
+}
+
+model Ticket {
+  id           String   @id @default(uuid()) @db.Uuid
+  memberId     String   @map("member_id") @db.Uuid
+  ticketTypeId String   @map("ticket_type_id") @db.Uuid
+  totalCount   Int      @map("total_count")
+  expiresAt    DateTime @map("expires_at") @db.Date
+  dailyLimit   Int?     @map("daily_limit")
+  weeklyLimit  Int?     @map("weekly_limit")
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  member       Member        @relation(fields: [memberId], references: [id])
+  ticketType   TicketType    @relation(fields: [ticketTypeId], references: [id])
+  ticketUsages TicketUsage[]
+
+  @@map("ticket")
+}
+
+model TicketUsage {
+  id              String            @id @default(uuid()) @db.Uuid
+  ticketId        String            @map("ticket_id") @db.Uuid
+  memberId        String            @map("member_id") @db.Uuid
+  classScheduleId String?           @map("class_schedule_id") @db.Uuid
+  status          TicketUsageStatus
+  releasedAt      DateTime?         @map("released_at") @db.Timestamptz(3)
+  createdAt       DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  ticket        Ticket         @relation(fields: [ticketId], references: [id])
+  member        Member         @relation(fields: [memberId], references: [id])
+  classSchedule ClassSchedule? @relation(fields: [classScheduleId], references: [id])
+  reservation   Reservation?   @relation("ReservationTicketUsage")
+
+  @@index([ticketId, status])
+  @@index([memberId, classScheduleId])
+  @@map("ticket_usage")
+}
+
+model ClassSchedule {
+  id             String              @id @default(uuid()) @db.Uuid
+  branchId       String              @map("branch_id") @db.Uuid
+  ticketTypeId   String              @map("ticket_type_id") @db.Uuid
+  instructorName String              @map("instructor_name")
+  startsAt       DateTime            @map("starts_at") @db.Timestamptz(3)
+  endsAt         DateTime            @map("ends_at") @db.Timestamptz(3)
+  capacity       Int
+  reservedCount  Int                 @default(0) @map("reserved_count")
+  status         ClassScheduleStatus @default(SCHEDULED)
+  canceledReason String?             @map("canceled_reason")
+  createdAt      DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  branch       Branch        @relation(fields: [branchId], references: [id])
+  ticketType   TicketType    @relation(fields: [ticketTypeId], references: [id])
+  reservations Reservation[]
+  ticketUsages TicketUsage[]
+
+  @@index([branchId, startsAt])
+  @@map("class_schedule")
+}
+
+model Reservation {
+  id                 String            @id @default(uuid()) @db.Uuid
+  classScheduleId    String            @map("class_schedule_id") @db.Uuid
+  memberId           String            @map("member_id") @db.Uuid
+  ticketUsageId      String            @unique @map("ticket_usage_id") @db.Uuid
+  status             ReservationStatus @default(RESERVED)
+  source             ReservationSource @default(MEMBER)
+  createdByManagerId String?           @map("created_by_manager_id") @db.Uuid
+  canceledAt         DateTime?         @map("canceled_at") @db.Timestamptz(3)
+  createdAt          DateTime          @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  classSchedule    ClassSchedule @relation(fields: [classScheduleId], references: [id])
+  member           Member        @relation(fields: [memberId], references: [id])
+  ticketUsage      TicketUsage   @relation("ReservationTicketUsage", fields: [ticketUsageId], references: [id])
+  createdByManager Manager?      @relation("ManagerCreatedReservations", fields: [createdByManagerId], references: [id])
+
+  @@index([memberId, status])
+  @@index([classScheduleId, status])
+  @@map("reservation")
+}
+
+model Policy {
+  id                             Int      @id @default(1)
+  cancelDeadlineMinutes          Int      @map("cancel_deadline_minutes")
+  rollingOpenDays                Int      @map("rolling_open_days")
+  rollingOpenHour                Int      @map("rolling_open_hour")
+  waitlistTimeoutMinutes         Int      @map("waitlist_timeout_minutes")
+  waitlistUrgentTimeoutMinutes   Int      @map("waitlist_urgent_timeout_minutes")
+  waitlistUrgentThresholdMinutes Int      @map("waitlist_urgent_threshold_minutes")
+  quietHoursStart                Int      @map("quiet_hours_start")
+  quietHoursEnd                  Int      @map("quiet_hours_end")
+  classCloseDeadlineMinutes      Int      @map("class_close_deadline_minutes")
+  classMinHeadcount              Int      @map("class_min_headcount")
+  noshowThresholdCount           Int      @map("noshow_threshold_count")
+  noshowSuspendDays              Int      @map("noshow_suspend_days")
+  noshowResetCycle               String   @default("MONTHLY") @map("noshow_reset_cycle")
+  proxyBookingEnabled            Boolean  @default(true) @map("proxy_booking_enabled")
+  createdAt                      DateTime @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt                      DateTime @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  @@map("policy")
+}
+
+model AuthCode {
+  id           String    @id @default(uuid()) @db.Uuid
+  phone        String
+  code         String
+  expiresAt    DateTime  @map("expires_at") @db.Timestamptz(3)
+  attemptCount Int       @default(0) @map("attempt_count")
+  consumedAt   DateTime? @map("consumed_at") @db.Timestamptz(3)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  @@index([phone, expiresAt])
+  @@map("auth_code")
 }

@@ -1,0 +1,197 @@
+import bcrypt from "bcryptjs";
+import { prisma } from "../src/lib/db";
+import { KST_TIME_ZONE, kstNow } from "../src/lib/time";
+
+type TicketCode = "PT_1ON1" | "PILATES_1ON4" | "YOGA";
+
+const KST = KST_TIME_ZONE;
+
+const memberSeeds: Array<{
+  phone: string;
+  name: string;
+  branchCode: "GANGNAM" | "SEONGSU" | "PANGYO";
+  ticketCode: TicketCode;
+  total: number;
+  remaining: number;
+  expiresInDays: number;
+  suspended?: boolean;
+}> = [
+  { phone: "01011110001", name: "김민서", branchCode: "GANGNAM", ticketCode: "PILATES_1ON4", total: 20, remaining: 6, expiresInDays: 64 },
+  { phone: "01011110002", name: "정하윤", branchCode: "GANGNAM", ticketCode: "PILATES_1ON4", total: 20, remaining: 4, expiresInDays: 78 },
+  { phone: "01011110003", name: "박서연", branchCode: "GANGNAM", ticketCode: "YOGA", total: 30, remaining: 2, expiresInDays: 17 },
+  { phone: "01011110004", name: "강서현", branchCode: "GANGNAM", ticketCode: "PILATES_1ON4", total: 20, remaining: 3, expiresInDays: 43, suspended: true },
+  { phone: "01011110005", name: "송예린", branchCode: "GANGNAM", ticketCode: "YOGA", total: 10, remaining: 0, expiresInDays: 7 },
+  { phone: "01011110006", name: "노현우", branchCode: "GANGNAM", ticketCode: "YOGA", total: 30, remaining: 8, expiresInDays: 2 },
+  { phone: "01011110007", name: "최유진", branchCode: "GANGNAM", ticketCode: "PT_1ON1", total: 10, remaining: 9, expiresInDays: 125 },
+  { phone: "01011110008", name: "한지우", branchCode: "GANGNAM", ticketCode: "PILATES_1ON4", total: 20, remaining: 11, expiresInDays: 114 },
+  { phone: "01011110009", name: "권민재", branchCode: "GANGNAM", ticketCode: "PILATES_1ON4", total: 20, remaining: 12, expiresInDays: 90 },
+  { phone: "01011110010", name: "문지아", branchCode: "GANGNAM", ticketCode: "PILATES_1ON4", total: 20, remaining: 10, expiresInDays: 90 },
+  { phone: "01011110011", name: "서도윤", branchCode: "GANGNAM", ticketCode: "PILATES_1ON4", total: 20, remaining: 9, expiresInDays: 90 },
+  { phone: "01011110012", name: "오하린", branchCode: "GANGNAM", ticketCode: "PILATES_1ON4", total: 20, remaining: 8, expiresInDays: 90 },
+  { phone: "01011110013", name: "임지후", branchCode: "GANGNAM", ticketCode: "PILATES_1ON4", total: 20, remaining: 7, expiresInDays: 90 },
+  { phone: "01011110014", name: "장유나", branchCode: "GANGNAM", ticketCode: "PILATES_1ON4", total: 20, remaining: 6, expiresInDays: 90 },
+  { phone: "01011110015", name: "이서준", branchCode: "SEONGSU", ticketCode: "PILATES_1ON4", total: 20, remaining: 3, expiresInDays: 90 },
+  { phone: "01011110016", name: "윤채원", branchCode: "PANGYO", ticketCode: "PILATES_1ON4", total: 20, remaining: 7, expiresInDays: 90 },
+  { phone: "01011110017", name: "고은채", branchCode: "SEONGSU", ticketCode: "YOGA", total: 20, remaining: 11, expiresInDays: 90 },
+  { phone: "01011110018", name: "김도현", branchCode: "SEONGSU", ticketCode: "PILATES_1ON4", total: 20, remaining: 10, expiresInDays: 90 },
+  { phone: "01011110019", name: "류서아", branchCode: "SEONGSU", ticketCode: "PILATES_1ON4", total: 20, remaining: 9, expiresInDays: 90 },
+  { phone: "01011110020", name: "신우진", branchCode: "SEONGSU", ticketCode: "PT_1ON1", total: 10, remaining: 8, expiresInDays: 90 },
+  { phone: "01011110021", name: "안유진", branchCode: "PANGYO", ticketCode: "YOGA", total: 20, remaining: 12, expiresInDays: 90 },
+  { phone: "01011110022", name: "이준혁", branchCode: "PANGYO", ticketCode: "PILATES_1ON4", total: 20, remaining: 10, expiresInDays: 90 },
+  { phone: "01011110023", name: "전다은", branchCode: "PANGYO", ticketCode: "PILATES_1ON4", total: 20, remaining: 9, expiresInDays: 90 },
+  { phone: "01011110024", name: "최민준", branchCode: "PANGYO", ticketCode: "PT_1ON1", total: 10, remaining: 7, expiresInDays: 90 },
+];
+
+function isAllowedDay(day: number, allowed: number[]) {
+  return allowed.includes(day);
+}
+
+async function main() {
+  if (process.env.NODE_ENV === "production" && !process.env.ALLOW_SEED) {
+    throw new Error("Seed execution is blocked in production unless ALLOW_SEED is set.");
+  }
+
+  const now = kstNow();
+  const today = now.startOf("day");
+  const managerPassword = process.env.ADMIN_SEED_PASSWORD;
+  if (!managerPassword) throw new Error("ADMIN_SEED_PASSWORD is required for seed data.");
+
+  await prisma.$transaction(async (tx) => {
+    await tx.reservation.deleteMany();
+    await tx.ticketUsage.deleteMany();
+    await tx.authCode.deleteMany();
+    await tx.ticket.deleteMany();
+    await tx.classSchedule.deleteMany();
+    await tx.manager.deleteMany();
+    await tx.member.deleteMany();
+    await tx.ticketType.deleteMany();
+    await tx.branch.deleteMany();
+    await tx.policy.deleteMany();
+
+    await tx.policy.create({
+      data: {
+        id: 1,
+        cancelDeadlineMinutes: 180,
+        rollingOpenDays: 14,
+        rollingOpenHour: 0,
+        waitlistTimeoutMinutes: 30,
+        waitlistUrgentTimeoutMinutes: 10,
+        waitlistUrgentThresholdMinutes: 180,
+        quietHoursStart: 23,
+        quietHoursEnd: 7,
+        classCloseDeadlineMinutes: 120,
+        classMinHeadcount: 3,
+        noshowThresholdCount: 3,
+        noshowSuspendDays: 7,
+        noshowResetCycle: "MONTHLY",
+        proxyBookingEnabled: true,
+      },
+    });
+
+    const branches = {
+      GANGNAM: await tx.branch.create({ data: { name: "강남점" } }),
+      SEONGSU: await tx.branch.create({ data: { name: "성수점" } }),
+      PANGYO: await tx.branch.create({ data: { name: "판교점" } }),
+    };
+
+    const ticketTypes = {
+      PT_1ON1: await tx.ticketType.create({ data: { code: "PT_1ON1", name: "1:1 개인레슨" } }),
+      PILATES_1ON4: await tx.ticketType.create({ data: { code: "PILATES_1ON4", name: "1:4 기구 필라테스" } }),
+      YOGA: await tx.ticketType.create({ data: { code: "YOGA", name: "요가 전용" } }),
+    };
+
+    const passwordHash = await bcrypt.hash(managerPassword, 10);
+    await tx.manager.createMany({
+      data: [
+        { loginId: "manager_gangnam", name: "강남점 매니저", role: "MANAGER", branchId: branches.GANGNAM.id, passwordHash },
+        { loginId: "manager_seongsu", name: "성수점 매니저", role: "MANAGER", branchId: branches.SEONGSU.id, passwordHash },
+        { loginId: "manager_pangyo", name: "판교점 매니저", role: "MANAGER", branchId: branches.PANGYO.id, passwordHash },
+        { loginId: "admin", name: "총괄 관리자", role: "ADMIN", passwordHash },
+      ],
+    });
+
+    const scheduleData: Array<{
+      branchId: string;
+      ticketTypeId: string;
+      instructorName: string;
+      startsAt: Date;
+      endsAt: Date;
+      capacity: number;
+    }> = [];
+    const addSchedule = (branchId: string, ticketCode: TicketCode, instructorName: string, hour: number, allowedDays: number[], capacity: number) => {
+      for (let offset = -14; offset <= 21; offset += 1) {
+        const date = today.add(offset, "day");
+        if (!isAllowedDay(date.day(), allowedDays)) continue;
+        const startsAt = date.hour(hour).minute(0).second(0).millisecond(0).toDate();
+        scheduleData.push({
+          branchId,
+          ticketTypeId: ticketTypes[ticketCode].id,
+          instructorName,
+          startsAt,
+          endsAt: new Date(startsAt.getTime() + 50 * 60 * 1_000),
+          capacity,
+        });
+      }
+    };
+
+    addSchedule(branches.GANGNAM.id, "YOGA", "박서연", 7, [1, 3, 5], 12);
+    addSchedule(branches.GANGNAM.id, "PILATES_1ON4", "김지원", 10, [0, 1, 2, 3, 4, 5, 6], 8);
+    addSchedule(branches.GANGNAM.id, "PT_1ON1", "김지원", 12, [2, 4], 1);
+    addSchedule(branches.GANGNAM.id, "PILATES_1ON4", "김지원", 17, [0, 1, 2, 3, 4, 5, 6], 8);
+    addSchedule(branches.GANGNAM.id, "PILATES_1ON4", "김지원", 19, [0, 1, 2, 3, 4, 5, 6], 8);
+    addSchedule(branches.GANGNAM.id, "YOGA", "박서연", 21, [2, 4, 6], 12);
+    addSchedule(branches.SEONGSU.id, "PILATES_1ON4", "이수민", 10, [0, 1, 2, 3, 4, 5, 6], 8);
+    addSchedule(branches.SEONGSU.id, "PILATES_1ON4", "이수민", 19, [0, 1, 2, 3, 4, 5, 6], 8);
+    addSchedule(branches.SEONGSU.id, "YOGA", "이수민", 7, [1, 3, 5], 12);
+    addSchedule(branches.PANGYO.id, "PILATES_1ON4", "박서연", 10, [0, 1, 2, 3, 4, 5, 6], 8);
+    addSchedule(branches.PANGYO.id, "PILATES_1ON4", "박서연", 19, [0, 1, 2, 3, 4, 5, 6], 8);
+    addSchedule(branches.PANGYO.id, "YOGA", "김지원", 21, [2, 4, 6], 12);
+    await tx.classSchedule.createMany({ data: scheduleData });
+
+    for (const seed of memberSeeds) {
+      const member = await tx.member.create({
+        data: {
+          branchId: branches[seed.branchCode].id,
+          name: seed.name,
+          phone: seed.phone,
+          phoneLast4: seed.phone.slice(-4),
+          isSuspended: seed.suspended ?? false,
+          suspendedReason: seed.suspended ? "노쇼 누적" : null,
+          suspendedUntil: seed.suspended ? today.add(7, "day").toDate() : null,
+        },
+      });
+      const ticket = await tx.ticket.create({
+        data: {
+          memberId: member.id,
+          ticketTypeId: ticketTypes[seed.ticketCode].id,
+          totalCount: seed.total,
+          expiresAt: today.add(seed.expiresInDays, "day").toDate(),
+          dailyLimit: 1,
+          weeklyLimit: seed.ticketCode === "PT_1ON1" ? null : 3,
+          isActive: true,
+        },
+      });
+      const consumed = seed.total - seed.remaining;
+      if (consumed > 0) {
+        await tx.ticketUsage.createMany({
+          data: Array.from({ length: consumed }, () => ({
+            ticketId: ticket.id,
+            memberId: member.id,
+            status: "CONSUMED" as const,
+          })),
+        });
+      }
+    }
+  }, { timeout: 60_000 });
+
+  console.info(`Seeded 3 branches, 24 members, and KST schedules (${KST}).`);
+}
+
+main()
+  .catch((error: unknown) => {
+    console.error(error);
+    process.exitCode = 1;
+  })
+  .finally(async () => {
+    await prisma.$disconnect();
+  });
