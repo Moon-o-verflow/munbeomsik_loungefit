@@ -1,49 +1,14 @@
-import type { Prisma } from "@/generated/prisma/client";
 import { prisma } from "@/lib/db";
 import { AppError } from "@/lib/errors";
 import { getPolicy } from "@/lib/policy";
-import { cancelDeadlineAt, isRollingOpen, kstDateString, kstDayBounds, kstWeekBounds } from "@/lib/time";
+import { cancelDeadlineAt, isRollingOpen, kstDayBounds, kstWeekBounds } from "@/lib/time";
+import { getActiveWaitlistOfferCount, lockSchedule, lockTicket, selectAndLockTicket } from "@/services/booking";
 import { getTicketRemainingCount, getTicketUsageCount } from "@/services/ledger";
+import { sweepLockedWaitlistSchedule } from "@/services/waitlist";
 
-type LockedSchedule = {
-  id: string;
-  ticketTypeId: string;
-  startsAt: Date;
-  capacity: number;
-  reservedCount: number;
-  status: "SCHEDULED" | "CLOSED" | "CANCELED";
-};
-
-type LockedTicket = { id: string; expiresAt: Date; dailyLimit: number | null; weeklyLimit: number | null };
 type ReservationLock = { id: string; status: "RESERVED" | "CANCELED" | "LATE_CANCELED" | "ATTENDED" | "NO_SHOW" | "CLASS_CANCELED" };
 
-async function lockSchedule(tx: Prisma.TransactionClient, scheduleId: string) {
-  const schedules = await tx.$queryRaw<LockedSchedule[]>`
-    SELECT
-      id,
-      ticket_type_id AS "ticketTypeId",
-      starts_at AS "startsAt",
-      capacity,
-      reserved_count AS "reservedCount",
-      status
-    FROM class_schedule
-    WHERE id = ${scheduleId}::uuid
-    FOR UPDATE
-  `;
-  return schedules[0] ?? null;
-}
-
-async function lockTicket(tx: Prisma.TransactionClient, ticketId: string) {
-  const tickets = await tx.$queryRaw<LockedTicket[]>`
-    SELECT id, expires_at AS "expiresAt", daily_limit AS "dailyLimit", weekly_limit AS "weeklyLimit"
-    FROM ticket
-    WHERE id = ${ticketId}::uuid
-    FOR UPDATE
-  `;
-  return tickets[0] ?? null;
-}
-
-async function lockReservation(tx: Prisma.TransactionClient, reservationId: string, memberId: string) {
+async function lockReservation(tx: import("@/generated/prisma/client").Prisma.TransactionClient, reservationId: string, memberId: string) {
   const reservations = await tx.$queryRaw<ReservationLock[]>`
     SELECT id, status
     FROM reservation
@@ -51,50 +16,6 @@ async function lockReservation(tx: Prisma.TransactionClient, reservationId: stri
     FOR UPDATE
   `;
   return reservations[0] ?? null;
-}
-
-async function selectAndLockTicket(
-  tx: Prisma.TransactionClient,
-  memberId: string,
-  schedule: LockedSchedule,
-) {
-  const typeTickets = await tx.$queryRaw<{ id: string }[]>`
-    SELECT id
-    FROM ticket
-    WHERE member_id = ${memberId}::uuid
-      AND ticket_type_id = ${schedule.ticketTypeId}::uuid
-      AND is_active = true
-    ORDER BY expires_at ASC, created_at ASC
-  `;
-
-  if (typeTickets.length === 0) {
-    throw new AppError("ERR_TICKET_TYPE_MISMATCH");
-  }
-
-  const scheduleDate = kstDateString(schedule.startsAt);
-  const validTickets = await tx.$queryRaw<{ id: string }[]>`
-    SELECT id
-    FROM ticket
-    WHERE member_id = ${memberId}::uuid
-      AND ticket_type_id = ${schedule.ticketTypeId}::uuid
-      AND is_active = true
-      AND expires_at >= ${scheduleDate}::date
-    ORDER BY expires_at ASC, created_at ASC
-  `;
-
-  if (validTickets.length === 0) {
-    throw new AppError("ERR_TICKET_EXPIRED");
-  }
-
-  for (const candidate of validTickets) {
-    // Every booking/cancellation transaction locks schedule first, then ticket.
-    const ticket = await lockTicket(tx, candidate.id);
-    if (ticket && (await getTicketRemainingCount(tx, ticket.id)) >= 1) {
-      return ticket;
-    }
-  }
-
-  throw new AppError("ERR_NO_REMAINING_COUNT");
 }
 
 export async function createMemberReservation(memberId: string, scheduleId: string) {
@@ -153,7 +74,7 @@ export async function createMemberReservation(memberId: string, scheduleId: stri
     if (duplicate) {
       throw new AppError("ERR_DUPLICATE_RESERVATION");
     }
-    if (schedule.reservedCount >= schedule.capacity) {
+    if (schedule.reservedCount + (await getActiveWaitlistOfferCount(tx, schedule.id)) >= schedule.capacity) {
       throw new AppError("ERR_CLASS_FULL");
     }
 
@@ -216,6 +137,8 @@ export async function cancelMemberReservation(memberId: string, reservationId: s
       where: { id: schedule.id },
       data: { reservedCount: { decrement: 1 } },
     });
+    schedule.reservedCount -= 1;
+    await sweepLockedWaitlistSchedule(tx, schedule, policy, now);
 
     return {
       status: refundable ? "CANCELED" : "LATE_CANCELED",

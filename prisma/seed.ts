@@ -58,6 +58,7 @@ async function main() {
 
   await prisma.$transaction(async (tx) => {
     await tx.reservation.deleteMany();
+    await tx.waitlistEntry.deleteMany();
     await tx.ticketUsage.deleteMany();
     await tx.authCode.deleteMany();
     await tx.ticket.deleteMany();
@@ -148,6 +149,8 @@ async function main() {
     addSchedule(branches.PANGYO.id, "YOGA", "김지원", 21, [2, 4, 6], 12);
     await tx.classSchedule.createMany({ data: scheduleData });
 
+    const createdMembers = new Map<string, { memberId: string; ticketId: string }>();
+
     for (const seed of memberSeeds) {
       const member = await tx.member.create({
         data: {
@@ -181,7 +184,70 @@ async function main() {
           })),
         });
       }
+      createdMembers.set(seed.phone, { memberId: member.id, ticketId: ticket.id });
     }
+
+    const memberTicket = (phone: string) => {
+      const value = createdMembers.get(phone);
+      if (!value) throw new Error(`Missing seed member ${phone}`);
+      return value;
+    };
+    const fullScheduleDate = now.hour() < 19 ? today : today.add(1, "day");
+    const fullSchedule = await tx.classSchedule.findFirst({
+      where: {
+        branchId: branches.GANGNAM.id,
+        ticketTypeId: ticketTypes.PILATES_1ON4.id,
+        startsAt: fullScheduleDate.hour(19).minute(0).second(0).millisecond(0).toDate(),
+      },
+    });
+    if (!fullSchedule) throw new Error("Missing Gangnam Pilates schedule for waitlist seed data.");
+
+    const fullMembers = ["01011110009", "01011110010", "01011110011", "01011110012", "01011110013", "01011110014", "01011110015", "01011110016"];
+    for (const phone of fullMembers) {
+      const member = memberTicket(phone);
+      const usage = await tx.ticketUsage.create({
+        data: { ticketId: member.ticketId, memberId: member.memberId, classScheduleId: fullSchedule.id, status: "CONFIRMED" },
+      });
+      await tx.reservation.create({
+        data: { classScheduleId: fullSchedule.id, memberId: member.memberId, ticketUsageId: usage.id, status: "RESERVED" },
+      });
+    }
+    await tx.classSchedule.update({ where: { id: fullSchedule.id }, data: { reservedCount: fullMembers.length } });
+
+    for (const [index, phone] of ["01011110018", "01011110019"].entries()) {
+      const member = memberTicket(phone);
+      const usage = await tx.ticketUsage.create({
+        data: { ticketId: member.ticketId, memberId: member.memberId, classScheduleId: fullSchedule.id, status: "HOLD" },
+      });
+      await tx.waitlistEntry.create({
+        data: { classScheduleId: fullSchedule.id, memberId: member.memberId, ticketUsageId: usage.id, sequence: index + 1, status: "WAITING" },
+      });
+    }
+
+    const offeredScheduleDate = fullScheduleDate.add(1, "day");
+    const offeredSchedule = await tx.classSchedule.findFirst({
+      where: {
+        branchId: branches.GANGNAM.id,
+        ticketTypeId: ticketTypes.PILATES_1ON4.id,
+        startsAt: offeredScheduleDate.hour(10).minute(0).second(0).millisecond(0).toDate(),
+      },
+    });
+    if (!offeredSchedule) throw new Error("Missing Gangnam Pilates offer schedule for seed data.");
+    const offeredMember = memberTicket("01011110008");
+    const offeredUsage = await tx.ticketUsage.create({
+      data: { ticketId: offeredMember.ticketId, memberId: offeredMember.memberId, classScheduleId: offeredSchedule.id, status: "HOLD" },
+    });
+    await tx.waitlistEntry.create({
+      data: {
+        classScheduleId: offeredSchedule.id,
+        memberId: offeredMember.memberId,
+        ticketUsageId: offeredUsage.id,
+        sequence: 1,
+        status: "OFFERED",
+        offeredAt: now.toDate(),
+        expiresAt: new Date(Math.min(now.add(25, "minute").valueOf(), offeredSchedule.startsAt.getTime())),
+      },
+    });
   }, { timeout: 60_000 });
 
   console.info(`Seeded 3 branches, 24 members, and KST schedules (${KST}).`);

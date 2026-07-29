@@ -39,6 +39,14 @@ enum ReservationSource {
   PROXY
 }
 
+enum WaitlistStatus {
+  WAITING
+  OFFERED
+  CONFIRMED
+  EXPIRED
+  RELEASED
+}
+
 model Branch {
   id        String   @id @default(uuid()) @db.Uuid
   name      String
@@ -66,6 +74,7 @@ model Member {
   tickets      Ticket[]
   ticketUsages TicketUsage[]
   reservations Reservation[]
+  waitlistEntries WaitlistEntry[]
 
   @@map("member")
 }
@@ -128,6 +137,7 @@ model TicketUsage {
   member        Member         @relation(fields: [memberId], references: [id])
   classSchedule ClassSchedule? @relation(fields: [classScheduleId], references: [id])
   reservation   Reservation?   @relation("ReservationTicketUsage")
+  waitlistEntry WaitlistEntry? @relation("WaitlistTicketUsage")
 
   @@index([ticketId, status])
   @@index([memberId, classScheduleId])
@@ -151,6 +161,7 @@ model ClassSchedule {
   ticketType   TicketType    @relation(fields: [ticketTypeId], references: [id])
   reservations Reservation[]
   ticketUsages TicketUsage[]
+  waitlistEntries WaitlistEntry[]
 
   @@index([branchId, startsAt])
   @@map("class_schedule")
@@ -175,6 +186,27 @@ model Reservation {
   @@index([memberId, status])
   @@index([classScheduleId, status])
   @@map("reservation")
+}
+
+model WaitlistEntry {
+  id              String         @id @default(uuid()) @db.Uuid
+  classScheduleId String         @map("class_schedule_id") @db.Uuid
+  memberId        String         @map("member_id") @db.Uuid
+  ticketUsageId   String         @unique @map("ticket_usage_id") @db.Uuid
+  sequence        Int
+  status          WaitlistStatus @default(WAITING)
+  offeredAt       DateTime?      @map("offered_at") @db.Timestamptz(3)
+  expiresAt       DateTime?      @map("expires_at") @db.Timestamptz(3)
+  createdAt       DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+
+  classSchedule ClassSchedule @relation(fields: [classScheduleId], references: [id])
+  member        Member        @relation(fields: [memberId], references: [id])
+  ticketUsage   TicketUsage   @relation("WaitlistTicketUsage", fields: [ticketUsageId], references: [id])
+
+  @@index([classScheduleId, status, sequence])
+  @@index([status, expiresAt])
+  @@index([memberId, status])
+  @@map("waitlist_entry")
 }
 
 model Policy {

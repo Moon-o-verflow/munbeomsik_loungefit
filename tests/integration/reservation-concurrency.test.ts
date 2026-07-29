@@ -13,6 +13,7 @@ type Fixture = {
 
 async function clearDatabase() {
   await prisma.reservation.deleteMany();
+  await prisma.waitlistEntry.deleteMany();
   await prisma.ticketUsage.deleteMany();
   await prisma.authCode.deleteMany();
   await prisma.ticket.deleteMany();

@@ -58,3 +58,11 @@ export function isRollingOpen(
 export function cancelDeadlineAt(startsAt: Date, cancelDeadlineMinutes: number) {
   return toKst(startsAt).subtract(cancelDeadlineMinutes, "minute").toDate();
 }
+
+export function isQuietHours(quietHoursStart: number, quietHoursEnd: number, now: ConfigType = new Date()) {
+  const hour = toKst(now).hour();
+  if (quietHoursStart < quietHoursEnd) {
+    return hour >= quietHoursStart && hour < quietHoursEnd;
+  }
+  return hour >= quietHoursStart || hour < quietHoursEnd;
+}

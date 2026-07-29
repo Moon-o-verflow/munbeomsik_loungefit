@@ -39,6 +39,9 @@ export const ERROR_DEFINITIONS = {
   },
   ERR_RESERVATION_NOT_FOUND: { status: 404, message: "예약 정보를 찾을 수 없습니다." },
   ERR_UNAUTHORIZED: { status: 401, message: "다시 로그인해 주세요." },
+  ERR_WAITLIST_DUPLICATE: { status: 409, message: "이미 대기 중인 수업입니다." },
+  ERR_WAITLIST_NOT_APPLICABLE: { status: 409, message: "아직 자리가 남아 있어 대기 등록이 필요하지 않습니다." },
+  ERR_OFFER_EXPIRED: { status: 410, message: "확정 시간이 지나 순번이 다음 대기자에게 넘어갔습니다." },
 } as const;
 
 export type ErrorCode = keyof typeof ERROR_DEFINITIONS;

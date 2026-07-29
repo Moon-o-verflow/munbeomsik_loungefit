@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/db";
 import { kstDayBounds, kstWeekBounds } from "@/lib/time";
-import { getTicketRemainingCount, getTicketUsageCount } from "@/services/ledger";
+import { getTicketHoldCount, getTicketRemainingCount, getTicketUsageCount } from "@/services/ledger";
 
 export async function getMemberTickets(memberId: string) {
   const now = new Date();
@@ -23,7 +23,7 @@ export async function getMemberTickets(memberId: string) {
         ticketTypeName: ticket.ticketType.name,
         totalCount: ticket.totalCount,
         remainingCount: await getTicketRemainingCount(prisma, ticket.id),
-        holdCount: 0,
+        holdCount: await getTicketHoldCount(prisma, ticket.id),
         expiresAt: ticket.expiresAt.toISOString().slice(0, 10),
         daysUntilExpiry: Math.ceil((ticket.expiresAt.getTime() - now.getTime()) / (24 * 60 * 60 * 1_000)),
         dailyLimit: ticket.dailyLimit,

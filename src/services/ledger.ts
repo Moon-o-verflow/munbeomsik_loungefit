@@ -37,14 +37,28 @@ export async function getTicketUsageCount(
 ) {
   const rows = await client.$queryRaw<{ usageCount: number }[]>`
     SELECT COUNT(*)::int AS "usageCount"
-    FROM reservation r
-    INNER JOIN ticket_usage u ON u.id = r.ticket_usage_id
-    INNER JOIN class_schedule c ON c.id = r.class_schedule_id
+    FROM ticket_usage u
+    INNER JOIN class_schedule c ON c.id = u.class_schedule_id
     WHERE u.ticket_id = ${ticketId}::uuid
-      AND r.status IN ('RESERVED', 'LATE_CANCELED', 'ATTENDED', 'NO_SHOW')
       AND c.starts_at >= ${from}
       AND c.starts_at < ${to}
+      AND (
+        u.status IN ('CONFIRMED', 'CONSUMED')
+        OR (u.status = 'HOLD' AND c.starts_at > NOW())
+      )
   `;
 
   return rows[0]?.usageCount ?? 0;
+}
+
+export async function getTicketHoldCount(client: LedgerClient, ticketId: string) {
+  const rows = await client.$queryRaw<{ holdCount: number }[]>`
+    SELECT COUNT(*)::int AS "holdCount"
+    FROM ticket_usage u
+    INNER JOIN class_schedule c ON c.id = u.class_schedule_id
+    WHERE u.ticket_id = ${ticketId}::uuid
+      AND u.status = 'HOLD'
+      AND c.starts_at > NOW()
+  `;
+  return rows[0]?.holdCount ?? 0;
 }

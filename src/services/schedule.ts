@@ -3,6 +3,7 @@ import { AppError, ERROR_DEFINITIONS, type ErrorCode } from "@/lib/errors";
 import { getPolicy } from "@/lib/policy";
 import { cancelDeadlineAt, isRollingOpen, kstDateRange, kstIsoString, kstNow, kstWeekBounds, kstDayBounds } from "@/lib/time";
 import { getTicketRemainingCount, getTicketUsageCount } from "@/services/ledger";
+import { sweepWaitlistSchedule } from "@/services/waitlist";
 
 type ScheduleWithRelations = Awaited<ReturnType<typeof findSchedules>>[number];
 
@@ -19,6 +20,10 @@ async function findSchedules(memberId: string, date: string, branchId?: string) 
       reservations: {
         where: { memberId, status: "RESERVED" },
         select: { id: true },
+      },
+      waitlistEntries: {
+        where: { status: { in: ["WAITING", "OFFERED"] } },
+        select: { id: true, memberId: true, sequence: true, status: true, expiresAt: true },
       },
     },
     orderBy: { startsAt: "asc" },
@@ -64,17 +69,21 @@ async function getScheduleBlockedReason(memberId: string, schedule: ScheduleWith
 async function serializeSchedule(memberId: string, schedule: ScheduleWithRelations) {
   const policy = await getPolicy();
   const now = new Date();
-  let cardState: "AVAILABLE" | "FULL" | "RESERVED" | "BLOCKED" | "CLOSED" = "AVAILABLE";
+  let cardState: "AVAILABLE" | "FULL" | "RESERVED" | "WAITING" | "BLOCKED" | "CLOSED" = "AVAILABLE";
   let blockedReason: ErrorCode | null = null;
+  const myWaitlist = schedule.waitlistEntries.find((entry) => entry.memberId === memberId) ?? null;
+  const offeredCount = schedule.waitlistEntries.filter((entry) => entry.status === "OFFERED").length;
 
   if (schedule.status !== "SCHEDULED" || schedule.startsAt <= now) {
     cardState = "CLOSED";
   } else if (schedule.reservations.length > 0) {
     cardState = "RESERVED";
+  } else if (myWaitlist) {
+    cardState = "WAITING";
   } else if (!isRollingOpen(schedule.startsAt, policy.rollingOpenDays, now)) {
     cardState = "BLOCKED";
     blockedReason = "ERR_CLASS_NOT_OPEN";
-  } else if (schedule.reservedCount >= schedule.capacity) {
+  } else if (schedule.reservedCount + offeredCount >= schedule.capacity) {
     cardState = "FULL";
   } else {
     blockedReason = await getScheduleBlockedReason(memberId, schedule);
@@ -90,8 +99,16 @@ async function serializeSchedule(memberId: string, schedule: ScheduleWithRelatio
     endsAt: kstIsoString(schedule.endsAt),
     capacity: schedule.capacity,
     reservedCount: schedule.reservedCount,
-    waitingCount: 0,
+    waitingCount: schedule.waitlistEntries.length,
     cardState,
+    myWaitlist: myWaitlist
+      ? {
+          id: myWaitlist.id,
+          sequence: myWaitlist.sequence,
+          status: myWaitlist.status,
+          expiresAt: myWaitlist.expiresAt ? kstIsoString(myWaitlist.expiresAt) : null,
+        }
+      : null,
     blockedReason,
     blockedMessage: blockedReason ? ERROR_DEFINITIONS[blockedReason].message : null,
     cancelDeadlineAt: kstIsoString(cancelDeadlineAt(schedule.startsAt, policy.cancelDeadlineMinutes)),
@@ -114,12 +131,17 @@ export async function getMemberScheduleList(memberId: string, date: string, bran
 }
 
 export async function getMemberScheduleDetail(memberId: string, scheduleId: string) {
+  await sweepWaitlistSchedule(scheduleId);
   const schedule = await prisma.classSchedule.findUnique({
     where: { id: scheduleId },
     include: {
       branch: { select: { name: true } },
       ticketType: { select: { name: true } },
       reservations: { where: { memberId, status: "RESERVED" }, select: { id: true } },
+      waitlistEntries: {
+        where: { status: { in: ["WAITING", "OFFERED"] } },
+        select: { id: true, memberId: true, sequence: true, status: true, expiresAt: true },
+      },
     },
   });
   if (!schedule) throw new AppError("ERR_CLASS_CLOSED");
@@ -151,12 +173,25 @@ export async function getMemberScheduleDetail(memberId: string, scheduleId: stri
 export async function getMemberReservations(memberId: string) {
   const policy = await getPolicy();
   const now = new Date();
+  const activeWaitlists = await prisma.waitlistEntry.findMany({
+    where: { memberId, status: { in: ["WAITING", "OFFERED"] } },
+    select: { classScheduleId: true },
+    distinct: ["classScheduleId"],
+  });
+  for (const { classScheduleId } of activeWaitlists) {
+    await sweepWaitlistSchedule(classScheduleId, now);
+  }
   const reservations = await prisma.reservation.findMany({
     where: { memberId },
     include: {
       classSchedule: { include: { branch: true, ticketType: true } },
     },
     orderBy: { classSchedule: { startsAt: "asc" } },
+  });
+  const waitlists = await prisma.waitlistEntry.findMany({
+    where: { memberId, status: { in: ["WAITING", "OFFERED"] } },
+    include: { classSchedule: { include: { branch: true, ticketType: true } } },
+    orderBy: [{ classSchedule: { startsAt: "asc" } }, { sequence: "asc" }],
   });
 
   return {
@@ -172,7 +207,19 @@ export async function getMemberReservations(memberId: string) {
         cancelDeadlineAt: kstIsoString(cancelDeadlineAt(reservation.classSchedule.startsAt, policy.cancelDeadlineMinutes)),
         cancelable: now < cancelDeadlineAt(reservation.classSchedule.startsAt, policy.cancelDeadlineMinutes),
       })),
-    waiting: [],
+    waiting: waitlists.map((entry) => ({
+      waitlistId: entry.id,
+      scheduleId: entry.classScheduleId,
+      sequence: entry.sequence,
+      status: entry.status,
+      expiresAt: entry.expiresAt ? kstIsoString(entry.expiresAt) : null,
+      remainingSeconds: entry.expiresAt ? Math.max(0, Math.floor((entry.expiresAt.getTime() - now.getTime()) / 1_000)) : null,
+      branchName: entry.classSchedule.branch.name,
+      ticketTypeName: entry.classSchedule.ticketType.name,
+      instructorName: entry.classSchedule.instructorName,
+      startsAt: kstIsoString(entry.classSchedule.startsAt),
+      holdNotice: "횟수 1회가 선차감된 상태입니다.",
+    })),
     past: reservations
       .filter((reservation) => reservation.status !== "RESERVED" || reservation.classSchedule.startsAt <= now)
       .map((reservation) => ({
