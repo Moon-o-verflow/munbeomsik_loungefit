@@ -29,6 +29,12 @@ export async function requireAdminScope(): Promise<AdminScope> {
   return adminScopeFromSession(await requireManagerSession());
 }
 
+export async function requireHeadAdminScope(): Promise<AdminScope> {
+  const scope = await requireAdminScope();
+  if (scope.role !== "ADMIN") throw new AppError("ERR_FORBIDDEN");
+  return scope;
+}
+
 export function scopedWhere(scope: AdminScope): Prisma.ClassScheduleWhereInput {
   return scope.branchId ? { branchId: scope.branchId } : {};
 }

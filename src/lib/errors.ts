@@ -53,6 +53,7 @@ export const ERROR_DEFINITIONS = {
     status: 409,
     message: "출석 처리는 수업 종료 후 24시간 이내에만 되돌릴 수 있습니다.",
   },
+  ERR_POLICY_VALIDATION: { status: 400, message: "정책 값이 올바르지 않습니다." },
 } as const;
 
 export type ErrorCode = keyof typeof ERROR_DEFINITIONS;
@@ -71,7 +72,20 @@ export class AppError extends Error {
   }
 }
 
+export class PolicyValidationError extends Error {
+  readonly fields: Record<string, string>;
+
+  constructor(fields: Record<string, string>) {
+    super(ERROR_DEFINITIONS.ERR_POLICY_VALIDATION.message);
+    this.name = "PolicyValidationError";
+    this.fields = fields;
+  }
+}
+
 export function errorResponse(error: unknown) {
+  if (error instanceof PolicyValidationError) {
+    return Response.json({ error: { code: "ERR_POLICY_VALIDATION", fields: error.fields } }, { status: 400 });
+  }
   if (error instanceof AppError) {
     return Response.json(
       { error: { code: error.code, message: error.message, ...(error.meta ? { meta: error.meta } : {}) } },

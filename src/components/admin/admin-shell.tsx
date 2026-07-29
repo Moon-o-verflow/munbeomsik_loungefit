@@ -9,9 +9,11 @@ const menu = [
   { href: "/admin/schedules", label: "시간표 관리" },
   { href: "/admin/proxy-booking", label: "대리 예약" },
   { href: "/admin/members", label: "회원 관리" },
+  { href: "/admin/stats", label: "통계" },
+  { href: "/admin/policy", label: "정책 설정" },
 ] as const;
 
-const unavailableMenu = ["통계", "정책 설정", "데이터 이관"] as const;
+const unavailableMenu = ["데이터 이관"] as const;
 
 export function AdminShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
