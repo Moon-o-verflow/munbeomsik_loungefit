@@ -1,17 +1,1 @@
-name: sweep
 
-on:
-  schedule:
-    - cron: "*/5 * * * *"
-  workflow_dispatch:
-
-jobs:
-  sweep:
-    runs-on: ubuntu-latest
-    steps:
-      - run: |
-          curl -fsS -X POST "$URL/api/cron/sweep" \
-            -H "Authorization: Bearer $SECRET"
-        env:
-          URL: ${{ secrets.APP_URL }}
-          SECRET: ${{ secrets.CRON_SECRET }}
